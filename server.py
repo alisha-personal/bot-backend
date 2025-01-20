@@ -8,11 +8,9 @@ from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
 from lib.data import Query
-from lib.bot import bot
+from lib.bot import create_tourism_bot, response_bot
 
-gemini_llm = ChatGoogleGenerativeAI(
-    model = "gemini-1.5-flash"
-)
+gemini_llm, system_prompt = create_tourism_bot()
 
 app = FastAPI()
 
@@ -25,9 +23,13 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-@app.get('/respond')
-async def respond():
-    response = bot(gemini_llm)
+@app.post('/respond')
+async def get_response(data:Query):
+    response = response_bot(
+        llm = gemini_llm,
+        system_prompt=system_prompt,
+        query = data.query
+    )
     return {
-        'response' : response
+        "response" : response
     }
