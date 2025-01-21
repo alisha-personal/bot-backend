@@ -18,7 +18,9 @@ gemini_llm, system_prompt, conversation_manager = create_tourism_bot()
 
 app = FastAPI()
 
-origins = ['*']
+origins = [
+    "http://localhost:5173",
+]
 
 app.add_middleware(
     CORSMiddleware,

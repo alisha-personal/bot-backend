@@ -1,6 +1,7 @@
 # bot.py
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage, AIMessage
+from langchain.prompts import PromptTemplate
 from typing import Tuple, List, Dict
 import json
 from datetime import datetime
@@ -101,8 +102,32 @@ def response_bot(llm: ChatGoogleGenerativeAI, system_prompt: str, query: str, se
     
     # Get response
     response = llm(messages).content
+
+    # Convert to HTML
+    response = format_to_html(response, llm)
     
     # Save to history
     conversation_manager.add_conversation(session_id, query, response)
     
     return response
+
+def format_to_html(text: str, llm: ChatGoogleGenerativeAI) -> str:
+    template_post = """You are an expert in converting plain text into presentable, attractive HTML content to be directly integrated into a webpage. 
+    Format your responses in HTML using:
+    <div></div> for the wrapper
+    <p> for paragraphs, <h3> for headings
+    <ul> or <ol> for lists, <li> for list items with bullets
+    <strong> for emphasis and technical terms
+    <a href="URL" target="_blank">Click Here</a> for links
+    <span> for numbers/stats
+    Convert the following text into HTML: {query}
+    Your response should strictly be HTML only, no enclouse like ```html []``` 
+    """
+    
+    html_prompt = PromptTemplate(
+        template=template_post,
+        input_variables=["query"]
+    )
+    
+    html_chain = html_prompt | llm
+    return html_chain.invoke({"query": text}).content
