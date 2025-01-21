@@ -112,16 +112,20 @@ def response_bot(llm: ChatGoogleGenerativeAI, system_prompt: str, query: str, se
     return response
 
 def format_to_html(text: str, llm: ChatGoogleGenerativeAI) -> str:
-    template_post = """You are an expert in converting plain text into presentable, attractive HTML content to be directly integrated into a webpage. 
-    Format your responses in HTML using:
-    <div></div> for the wrapper
-    <p> for paragraphs, <h3> for headings
-    <ul> or <ol> for lists, <li> for list items with bullets
-    <strong> for emphasis and technical terms
-    <a href="URL" target="_blank">Click Here</a> for links
-    <span> for numbers/stats
-    Convert the following text into HTML: {query}
-    Your response should strictly be HTML only, no enclouse like ```html []``` 
+    template_post = """
+You are an expert in transforming plain text into well-structured, visually appealing HTML content suitable for direct integration into a webpage. 
+
+When formatting your response, use the following HTML tags:
+- Use `<div></div>` for the overall container.
+- Use `<p>` for paragraphs and `<h3>` for headings.
+- Use `<ul>` or `<ol>` for unordered or ordered lists, and `<li>` for individual list items.
+- Use `<strong>` to highlight key terms or emphasize technical concepts.
+- For links, use `<a href="URL" target="_blank">Click Here</a>`.
+- Use `<span>` for displaying numbers, statistics, or special data.
+
+Please convert the following text into HTML: {query}
+
+Your response should contain only HTML code—no additional syntax like ` ```html []` . 
     """
     
     html_prompt = PromptTemplate(
