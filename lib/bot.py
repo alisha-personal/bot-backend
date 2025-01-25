@@ -50,7 +50,7 @@ class ConversationManager:
         """Get recent conversation history for a session"""
         return self.conversations.get(session_id, [])
 
-def create_tourism_bot(temperature: float = 0.7) -> Tuple[ChatGoogleGenerativeAI, str, ConversationManager]:
+def create_tourism_bot(temperature: float = 0.7) -> Tuple[ChatGoogleGenerativeAI, str]:
     """
     Initialize Gemini with system prompt and conversation manager.
     """
@@ -76,26 +76,16 @@ Keep responses friendly, informative, and focused on Australian travel."""
         convert_system_message_to_human=True
     )
     
-    conversation_manager = ConversationManager()
     
-    return llm, system_prompt, conversation_manager
+    return llm, system_prompt
 
-def response_bot(llm: ChatGoogleGenerativeAI, system_prompt: str, query: str, session_id: str, conversation_manager: ConversationManager) -> str:
-    """
-    Generate response while maintaining conversation history.
-    """
-    # Get recent conversation history
-    recent_history = conversation_manager.get_recent_history(session_id)
+def response_bot(llm: ChatGoogleGenerativeAI, system_prompt: str, query: str, session_id: str) -> str:
     
-    # Build messages with history
+    """
+    Generate response using conversation context.
+    """
+    # Build messages with system prompt
     messages = [HumanMessage(content=f"System: {system_prompt}")]
-    
-    # Add recent conversation history to context
-    for conv in recent_history:
-        messages.extend([
-            HumanMessage(content=conv["query"]),
-            AIMessage(content=conv["response"])
-        ])
     
     # Add current query
     messages.append(HumanMessage(content=query))
@@ -105,9 +95,6 @@ def response_bot(llm: ChatGoogleGenerativeAI, system_prompt: str, query: str, se
 
     # Convert to HTML
     response = format_to_html(response, llm)
-    
-    # Save to history
-    conversation_manager.add_conversation(session_id, query, response)
     
     return response
 
