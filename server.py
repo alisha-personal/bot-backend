@@ -44,6 +44,12 @@ class Query(BaseModel):
     query: str
     session_id: Optional[str] = None
 
+@app.get('/status')
+def get_status():
+    return {
+        'status' : 'active'
+    }
+
 # Authentication routes
 @app.post("/register")
 def register_user(user: UserRegistration, db: Session = Depends(get_db)):
