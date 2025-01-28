@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
 import uuid
+from dotenv import find_dotenv, load_dotenv
 
 from lib.database import get_db, Base, engine
 from lib.models import User, UserSession, Conversation
@@ -18,6 +19,7 @@ from lib.auth import (
 )
 from lib.bot import create_tourism_bot, response_bot
 
+load_dotenv(find_dotenv())
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
