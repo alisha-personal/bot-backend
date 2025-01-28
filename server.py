@@ -94,7 +94,8 @@ def login(
     return {
         "access_token": access_token, 
         "token_type": "bearer",
-        "session_id": session.id
+        "session_id": session.id,
+        "user_name" : user.username
     }
 
 @app.post('/respond')
@@ -126,3 +127,29 @@ def get_response(
         "response": response,
         "session_id": session_id
     }
+
+@app.get("/user/sessions")
+def get_user_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Retrieve conversations grouped by unique session_id
+    session_groups = (
+        db.query(Conversation.user_id, Conversation.query, Conversation.timestamp)
+        .filter(Conversation.user_id == current_user.id)
+        .distinct(Conversation.query)
+        .order_by(Conversation.timestamp.desc())
+        .limit(10)  # Limit to 10 most recent unique conversations
+        .all()
+    )
+    
+    # Transform into desired format
+    sessions = [
+        {
+            "session_name": conv.query[:30] + "...",  # First 30 chars as session name
+            "session_id": str(hash(conv.query))  # Use query hash as session identifier
+        } 
+        for conv in session_groups
+    ]
+    
+    return sessions

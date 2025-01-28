@@ -7,49 +7,6 @@ import json
 from datetime import datetime
 import os
 
-class ConversationManager:
-    def __init__(self, history_file: str = "conversation_history.json"):
-        self.history_file = history_file
-        self.conversations: Dict[str, List[Dict]] = self._load_history()
-        
-    def _load_history(self) -> Dict[str, List[Dict]]:
-        """Load conversation history from JSON file"""
-        if os.path.exists(self.history_file):
-            try:
-                with open(self.history_file, 'r') as f:
-                    return json.load(f)
-            except json.JSONDecodeError:
-                return {}
-        return {}
-    
-    def save_history(self):
-        """Save conversation history to JSON file"""
-        with open(self.history_file, 'w') as f:
-            json.dump(self.conversations, f, indent=2)
-            
-    def add_conversation(self, session_id: str, query: str, response: str):
-        """Add new conversation to history"""
-        if session_id not in self.conversations:
-            self.conversations[session_id] = []
-            
-        conversation = {
-            "timestamp": datetime.now().isoformat(),
-            "query": query,
-            "response": response
-        }
-        
-        self.conversations[session_id].append(conversation)
-        
-        # Keep only recent 3 conversations
-        if len(self.conversations[session_id]) > 3:
-            self.conversations[session_id] = self.conversations[session_id][-3:]
-            
-        self.save_history()
-        
-    def get_recent_history(self, session_id: str) -> List[Dict]:
-        """Get recent conversation history for a session"""
-        return self.conversations.get(session_id, [])
-
 def create_tourism_bot(temperature: float = 0.7) -> Tuple[ChatGoogleGenerativeAI, str]:
     """
     Initialize Gemini with system prompt and conversation manager.
@@ -76,13 +33,53 @@ Keep responses friendly, informative, and focused on Australian travel."""
         convert_system_message_to_human=True
     )
     
-    
     return llm, system_prompt
 
-def response_bot(llm: ChatGoogleGenerativeAI, system_prompt: str, query: str, session_id: str) -> str:
-    
+def validate_response(response: str, query: str, llm: ChatGoogleGenerativeAI) -> Tuple[bool, str]:
     """
-    Generate response using conversation context.
+    Validate if the response is related to Australian tourism and modify if needed.
+    Returns: (is_valid, modified_response)
+    """
+    validator_prompt = """As an Australian tourism content validator, analyze the following query and response.
+    Determine if the response is strictly related to Australian tourism, travel, or appropriately redirects non-Australian queries.
+    
+    Query: {query}
+    Response: {response}
+    
+    If the response strays from Australian tourism or doesn't properly redirect non-Australian queries:
+    1. Return "INVALID" on the first line
+    2. Provide a corrected response focused on Australian tourism or a polite redirect
+    
+    If the response is appropriate:
+    1. Return "VALID" on the first line
+    2. Return the original response unchanged
+    
+    Your response should start with either VALID or INVALID on its own line, followed by the response text.
+    """
+    
+    validation_prompt = PromptTemplate(
+        template=validator_prompt,
+        input_variables=["query", "response"]
+    )
+    
+    validation_chain = validation_prompt | llm
+    validation_result = validation_chain.invoke({
+        "query": query,
+        "response": response
+    }).content
+    
+    # Split result into validation status and response
+    lines = validation_result.split('\n', 1)
+    is_valid = lines[0].strip() == "VALID"
+    
+    # Get the validated/corrected response
+    validated_response = lines[1].strip() if len(lines) > 1 else response
+    
+    return is_valid, validated_response
+
+def response_bot(llm: ChatGoogleGenerativeAI, system_prompt: str, query: str, session_id: str) -> str:
+    """
+    Generate response using conversation context with validation.
     """
     # Build messages with system prompt
     messages = [HumanMessage(content=f"System: {system_prompt}")]
@@ -90,13 +87,26 @@ def response_bot(llm: ChatGoogleGenerativeAI, system_prompt: str, query: str, se
     # Add current query
     messages.append(HumanMessage(content=query))
     
-    # Get response
-    response = llm(messages).content
-
-    # Convert to HTML
-    response = format_to_html(response, llm)
+    # Get initial response
+    initial_response = llm(messages).content
     
-    return response
+    # Validate and potentially modify the response
+    is_valid, validated_response = validate_response(initial_response, query, llm)
+    
+    # If not valid, make another attempt with a stronger prompt
+    if not is_valid:
+        messages = [
+            HumanMessage(content=f"""System: {system_prompt}
+            IMPORTANT: Your response MUST be about Australian tourism or politely redirect non-Australian queries.
+            Previous response was off-topic. Please ensure this response stays focused."""),
+            HumanMessage(content=query)
+        ]
+        validated_response = llm(messages).content
+    
+    # Convert to HTML
+    final_response = format_to_html(validated_response, llm)
+    
+    return final_response
 
 def format_to_html(text: str, llm: ChatGoogleGenerativeAI) -> str:
     template_post = """
