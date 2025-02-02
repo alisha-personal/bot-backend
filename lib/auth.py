@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import os
 
 from .database import get_db
-from .models import User, UserSession
+from .models import User  # Removed UserSession import
 
 # Authentication configurations
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
@@ -35,11 +35,22 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials"
+            )
         user = db.query(User).filter(User.username == username).first()
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found"
+            )
         return user
     except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials"
+        )
 
 def create_user(db: Session, username: str, email: str, password: str):
     hashed_password = hash_password(password)
@@ -55,9 +66,4 @@ def authenticate_user(db: Session, username: str, password: str):
         return None
     return user
 
-def create_user_session(db: Session, user_id: int):
-    new_session = UserSession(user_id=user_id)
-    db.add(new_session)
-    db.commit()
-    db.refresh(new_session)
-    return new_session
+# Removed create_user_session function as it's no longer needed

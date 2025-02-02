@@ -1,11 +1,12 @@
 # bot.py
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage, AIMessage
+from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from langchain.prompts import PromptTemplate
 from typing import Tuple, List, Dict
 import json
 from datetime import datetime
 import os
+
 
 def create_tourism_bot(temperature: float = 0.7) -> Tuple[ChatGoogleGenerativeAI, str]:
     """

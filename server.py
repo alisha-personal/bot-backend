@@ -5,18 +5,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from typing import Optional
+from typing import Optional, List
 import uuid
+from datetime import datetime
 from dotenv import find_dotenv, load_dotenv
 
 from lib.database import get_db, Base, engine
-from lib.models import User, UserSession, Conversation
+from lib.models import User, ChatSession, Message
 from lib.auth import (
     create_user, 
     authenticate_user, 
     create_access_token, 
-    get_current_user,
-    create_user_session
+    get_current_user
 )
 from lib.bot import create_tourism_bot, response_bot
 
@@ -91,108 +91,136 @@ def login(
     # Create access token
     access_token = create_access_token({"sub": user.username})
     
-    # Create user session
-    session = create_user_session(db, user.id)
-    
     return {
         "access_token": access_token, 
         "token_type": "bearer",
-        "session_id": session.id,
-        "user_name" : user.username
+        "user_name": user.username  # Changed user_name to username for consistency
     }
 
+class MessageResponse(BaseModel):
+    content: str
+    isBot: bool
+    timestamp: datetime
+
+class SessionResponse(BaseModel):
+    session_name: str
+    session_id: str
+    last_message: datetime
+
+class ConversationResponse(BaseModel):
+    messages: List[MessageResponse]
+
 @app.post('/respond')
-def get_response(
-    data: Query, 
+async def get_response(
+    data: Query,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Generate session_id if not provided
-    session_id = data.session_id or str(uuid.uuid4())
+    session_id = data.session_id
+    query = data.query
     
-    response = response_bot(
+    if not session_id:
+        # Create new session
+        session_id = str(uuid.uuid4())
+        chat_session = ChatSession(
+            id=session_id,
+            user_id=current_user.id,
+            initial_message=query
+        )
+        db.add(chat_session)
+    
+    # Save user message
+    user_message = Message(
+        session_id=session_id,
+        content=query,
+        is_bot=False
+    )
+    db.add(user_message)
+    
+    # Get bot response
+    bot_response = response_bot(
         llm=gemini_llm,
         system_prompt=system_prompt,
-        query=data.query,
+        query=query,
         session_id=session_id
     )
     
-    # Save conversation to database
-    conversation = Conversation(
-        user_id=current_user.id,
-        query=data.query,
-        response=response
+    # Save bot message
+    bot_message = Message(
+        session_id=session_id,
+        content=bot_response,
+        is_bot=True
     )
-    db.add(conversation)
+    db.add(bot_message)
+    
     db.commit()
     
     return {
-        "response": response,
+        "response": bot_response,
         "session_id": session_id
     }
 
-# @app.get("/user/sessions")
-# def get_user_sessions(
-#     current_user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     # Retrieve conversations grouped by unique session_id
-#     session_groups = (
-#         db.query(Conversation.user_id, Conversation.query, Conversation.timestamp)
-#         .filter(Conversation.user_id == current_user.id)
-#         .distinct(Conversation.query)
-#         .order_by(Conversation.timestamp.desc())
-#         .limit(10)  # Limit to 10 most recent unique conversations
-#         .all()
-#     )
-    
-#     # Transform into desired format
-#     sessions = [
-#         {
-#             "session_name": conv.query[:30] + "...",  # First 30 chars as session name
-#             "session_id": str(hash(conv.query))  # Use query hash as session identifier
-#         } 
-#         for conv in session_groups
-#     ]
-    
-#     return sessions
-
-@app.get("/user/sessions")
-def get_user_sessions(
+@app.get("/user/sessions", response_model=List[SessionResponse])
+async def get_user_sessions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Using a subquery to get the latest conversation for each unique query
-    latest_conversations = (
+    sessions = (
         db.query(
-            Conversation,
-            func.row_number().over(
-                partition_by=Conversation.query,
-                order_by=Conversation.timestamp.desc()
-            ).label('rn')
+            ChatSession.id,
+            ChatSession.initial_message,
+            func.max(Message.timestamp).label('last_message')
         )
-        .filter(Conversation.user_id == current_user.id)
-        .subquery()
-    )
-    
-    session_groups = (
-        db.query(
-            latest_conversations.c.user_id,
-            latest_conversations.c.query,
-            latest_conversations.c.timestamp
-        )
-        .filter(latest_conversations.c.rn == 1)
-        .order_by(latest_conversations.c.timestamp.desc())
-        .limit(10)
+        .join(Message)
+        .filter(ChatSession.user_id == current_user.id)
+        .group_by(ChatSession.id, ChatSession.initial_message)
+        .order_by(func.max(Message.timestamp).desc())
         .all()
     )
     
-    sessions = [
-        {
-            "session_name": conv.query[:30] + "..." if len(conv.query) > 30 else conv.query,
-            "session_id": str(hash(conv.query + str(conv.timestamp)))
-        } 
-        for conv in session_groups
+    return [
+        SessionResponse(
+            session_name=session.initial_message[:30] + "..." if len(session.initial_message) > 30 else session.initial_message,
+            session_id=session.id,
+            last_message=session.last_message
+        )
+        for session in sessions
     ]
+
+@app.get("/user/sessions/{session_id}/messages", response_model=ConversationResponse)
+async def get_session_messages(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Verify session belongs to user
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id
+        )
+        .first()
+    )
     
-    return sessions
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Get all messages for session
+    messages = (
+        db.query(Message)
+        .filter(Message.session_id == session_id)
+        .order_by(Message.timestamp)
+        .all()
+    )
+    
+    return ConversationResponse(
+        messages=[
+            MessageResponse(
+                content=msg.content,
+                isBot=msg.is_bot,
+                timestamp=msg.timestamp
+            )
+            for msg in messages
+        ]
+    )
