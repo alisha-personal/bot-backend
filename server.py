@@ -142,7 +142,8 @@ async def get_response(
         llm=gemini_llm,
         system_prompt=system_prompt,
         query=query,
-        session_id=session_id
+        session_id=session_id,
+        db=db
     )
     
     # Save bot message

@@ -6,7 +6,8 @@ from typing import Tuple, List, Dict
 import json
 from datetime import datetime
 import os
-
+from sqlalchemy.orm import Session
+from .models import Message
 
 def create_tourism_bot(temperature: float = 0.7) -> Tuple[ChatGoogleGenerativeAI, str]:
     """
@@ -78,36 +79,54 @@ def validate_response(response: str, query: str, llm: ChatGoogleGenerativeAI) ->
     
     return is_valid, validated_response
 
-def response_bot(llm: ChatGoogleGenerativeAI, system_prompt: str, query: str, session_id: str) -> str:
+def response_bot(
+    llm: ChatGoogleGenerativeAI, 
+    system_prompt: str, 
+    query: str, 
+    session_id: str,
+    db: Session
+) -> str:
     """
     Generate response using conversation context with validation.
     """
-    # Build messages with system prompt
-    messages = [HumanMessage(content=f"System: {system_prompt}")]
-    
-    # Add current query
-    messages.append(HumanMessage(content=query))
-    
+       # Get conversation history from database
+    messages = db.query(Message).filter(
+        Message.session_id == session_id
+    ).order_by(Message.timestamp.asc()).all()
+
+    # Convert database messages to LangChain schema
+    chat_history = []
+    for msg in messages:
+        if msg.is_bot:
+            chat_history.append(AIMessage(content=msg.content))
+        else:
+            chat_history.append(HumanMessage(content=msg.content))
+
+    # Build message chain with system prompt and history
+    messages = [
+        SystemMessage(content=system_prompt),  # Converted to human message by LLM setting
+        *chat_history,
+        HumanMessage(content=query)
+    ]
+
     # Get initial response
     initial_response = llm(messages).content
-    
+
     # Validate and potentially modify the response
     is_valid, validated_response = validate_response(initial_response, query, llm)
-    
-    # If not valid, make another attempt with a stronger prompt
+
+    # If not valid, retry with correction notice and full history
     if not is_valid:
-        messages = [
-            HumanMessage(content=f"""System: {system_prompt}
-            IMPORTANT: Your response MUST be about Australian tourism or politely redirect non-Australian queries.
-            Previous response was off-topic. Please ensure this response stays focused."""),
-            HumanMessage(content=query)
+        correction_messages = [
+            SystemMessage(content=system_prompt + "\nIMPORTANT: Previous response was invalid. "
+                            "You MUST focus on Australian tourism or redirect appropriately."),
+            *chat_history,
+            HumanMessage(content=query),
+            HumanMessage(content="Please correct your response to focus on Australian tourism")
         ]
-        validated_response = llm(messages).content
-    
-    # Convert to HTML
-    final_response = format_to_html(validated_response, llm)
-    
-    return final_response
+        validated_response = llm(correction_messages).content
+
+    return format_to_html(validated_response, llm)
 
 def format_to_html(text: str, llm: ChatGoogleGenerativeAI) -> str:
     template_post = """
