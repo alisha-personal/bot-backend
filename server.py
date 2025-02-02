@@ -4,6 +4,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import Optional
 import uuid
 from dotenv import find_dotenv, load_dotenv
@@ -130,26 +131,66 @@ def get_response(
         "session_id": session_id
     }
 
+# @app.get("/user/sessions")
+# def get_user_sessions(
+#     current_user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db)
+# ):
+#     # Retrieve conversations grouped by unique session_id
+#     session_groups = (
+#         db.query(Conversation.user_id, Conversation.query, Conversation.timestamp)
+#         .filter(Conversation.user_id == current_user.id)
+#         .distinct(Conversation.query)
+#         .order_by(Conversation.timestamp.desc())
+#         .limit(10)  # Limit to 10 most recent unique conversations
+#         .all()
+#     )
+    
+#     # Transform into desired format
+#     sessions = [
+#         {
+#             "session_name": conv.query[:30] + "...",  # First 30 chars as session name
+#             "session_id": str(hash(conv.query))  # Use query hash as session identifier
+#         } 
+#         for conv in session_groups
+#     ]
+    
+#     return sessions
+
 @app.get("/user/sessions")
 def get_user_sessions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Retrieve conversations grouped by unique session_id
-    session_groups = (
-        db.query(Conversation.user_id, Conversation.query, Conversation.timestamp)
+    # Using a subquery to get the latest conversation for each unique query
+    latest_conversations = (
+        db.query(
+            Conversation,
+            func.row_number().over(
+                partition_by=Conversation.query,
+                order_by=Conversation.timestamp.desc()
+            ).label('rn')
+        )
         .filter(Conversation.user_id == current_user.id)
-        .distinct(Conversation.query)
-        .order_by(Conversation.timestamp.desc())
-        .limit(10)  # Limit to 10 most recent unique conversations
+        .subquery()
+    )
+    
+    session_groups = (
+        db.query(
+            latest_conversations.c.user_id,
+            latest_conversations.c.query,
+            latest_conversations.c.timestamp
+        )
+        .filter(latest_conversations.c.rn == 1)
+        .order_by(latest_conversations.c.timestamp.desc())
+        .limit(10)
         .all()
     )
     
-    # Transform into desired format
     sessions = [
         {
-            "session_name": conv.query[:30] + "...",  # First 30 chars as session name
-            "session_id": str(hash(conv.query))  # Use query hash as session identifier
+            "session_name": conv.query[:30] + "..." if len(conv.query) > 30 else conv.query,
+            "session_id": str(hash(conv.query + str(conv.timestamp)))
         } 
         for conv in session_groups
     ]
